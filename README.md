@@ -18,12 +18,18 @@ npm start
 
 Visit <http://localhost:8080>. Select **Create account** to sign up, then use MODO.
 
+### Supabase
+
+Importing the GitHub repo into Supabase does not create the tables. In the Supabase SQL editor, run `supabase/migrations/20261018120000_modo.sql`. Then copy the project URL and **service_role** key into a local `.env` file (see `.env.example`). Restart `npm start`.
+
+The server keeps sign-in, passwords, and sessions. Supabase stores the accounts and workspaces. The service role key stays on the server and is never sent to the browser. Row level security is enabled with no public policies, so the anon key cannot read the tables. On the first start with Supabase configured, accounts already in `data/modo.sqlite` are copied across if the Supabase project is still empty. After that, sign in with the same email and password.
+
 For interface work with live reload, run `npm start` in one terminal and `npm run dev` in another, then open <http://localhost:5173>. The dev server proxies the API to port 8080.
 
 - With no email provider configured **in development only**, new users are immediately verified. For local password recovery, the development server prints a one-time recovery link to its console. Do not use this behaviour for production.
 - Each account gets a new, empty workspace. The UI has no prefilled fictional people or challenges.
 - In **Settings → Your data**, you can import a previous browser-local MODO workspace explicitly, import/export JSON, or clear your account's workspace. Migration requires confirmation and replaces all current account data.
-- Data is saved to `data/modo.sqlite` on the server and survives browser refresh and server restarts. Sign in on another device against the same server to access it. Changes save automatically after ~450 ms; a network outage displays a warning and retries. If two tabs/devices edit the same workspace, saves detect revision conflicts and **do not overwrite without warning**. Conflicts still require manual reload/backup resolution.
+- With `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set, accounts and workspaces are saved in Supabase. Without those values, data is saved to `data/modo.sqlite`. Either way it survives browser refresh and server restarts. Sign in on another device against the same server to access it. Changes save automatically after ~450 ms; a network outage displays a warning and retries. If two tabs/devices edit the same workspace, saves detect revision conflicts and **do not overwrite without warning**. Conflicts still require manual reload/backup resolution.
 
 ### Security functionality implemented
 

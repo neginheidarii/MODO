@@ -3,7 +3,9 @@
   "version": "3.0.0",
   "private": true,
   "type": "module",
-  "engines": {"node": ">=22.13.0"},
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "dev": "vite --config client/vite.config.js",
     "build": "vite build --config client/vite.config.js",
@@ -13,6 +15,7 @@
     "test:auth": "python3 tests/auth_e2e.py"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

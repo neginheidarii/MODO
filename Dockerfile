@@ -7,9 +7,9 @@ RUN npm ci && npm run build
 
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json server.mjs ./
+COPY package.json package-lock.json server.mjs store.mjs env.mjs ./
 COPY --from=build /app/dist ./dist
-RUN mkdir -p /data && chown -R node:node /app /data
+RUN npm ci --omit=dev && mkdir -p /data && chown -R node:node /app /data
 USER node
 ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0 MODO_DATA_DIR=/data
 EXPOSE 8080

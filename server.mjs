@@ -3,7 +3,6 @@
  * Configure environment as documented in README before public deployment.
  */
 import {loadLocalEnv} from './env.mjs';
-loadLocalEnv();
 import http from 'node:http';
 import {createReadStream, statSync, existsSync} from 'node:fs';
 import {resolve, extname, sep, dirname, join} from 'node:path';
@@ -11,6 +10,7 @@ import {fileURLToPath} from 'node:url';
 import {randomBytes, createHash, scrypt as scryptCallback, timingSafeEqual} from 'node:crypto';
 import {promisify} from 'node:util';
 import {importLocalSqlite, openStore} from './store.mjs';
+loadLocalEnv();
 const scrypt=promisify(scryptCallback);
 const ROOT=dirname(fileURLToPath(import.meta.url));
 const PORT=Number(process.env.PORT||8080);
@@ -60,51 +60,51 @@ async function auth(req,res,path,s){
  if(path==='/api/auth/register'){
   const email=String(data.email||'').trim().toLowerCase(),name=String(data.name||'').trim(),password=String(data.password||'');
   if(!NAME_EMAIL.test(email)||email.length>254||name.length<2||name.length>70||password.length<12||password.length>200)return fail(res,400,'Enter a valid name, email and password (12+ characters).');
-  if(prepared.userByEmail.get(email))return fail(res,409,'An account with that email already exists.');
+  if(await store.userByEmail(email))return fail(res,409,'An account with that email already exists.');
   const id=randomBytes(16).toString('hex'),pass=await passwordHash(password),verified=EMAIL_READY?0:1;
-  db.prepare('INSERT INTO users(id,email,display_name,password_hash,verified,created_at) VALUES(?,?,?,?,?,?)').run(id,email,name,pass,verified,now());
-  if(!verified){const sent=await sendAccountLink({id,email},'verify');if(!sent){db.prepare('DELETE FROM users WHERE id=?').run(id);return fail(res,503,'Email delivery is unavailable. Please try again later.');}return respond(res,201,{message:'Check your inbox to verify your email, then sign in.',verificationRequired:true});}
-  const csrf=createSession(res,id);return respond(res,201,{user:{id,email,name},csrf});
+  await store.insertUser({id,email,display_name:name,password_hash:pass,verified,created_at:now()});
+  if(!verified){const sent=await sendAccountLink({id,email},'verify');if(!sent){await store.deleteUser(id);return fail(res,503,'Email delivery is unavailable. Please try again later.');}return respond(res,201,{message:'Check your inbox to verify your email, then sign in.',verificationRequired:true});}
+  const csrf=await createSession(res,id);return respond(res,201,{user:{id,email,name},csrf});
  }
  if(path==='/api/auth/login'){
-  const email=String(data.email||'').trim().toLowerCase(),password=String(data.password||'');const user=prepared.userByEmail.get(email);const good=user?await passwordMatches(password,user.password_hash):await passwordMatches(password,'scrypt$32768$'+('00'.repeat(16))+'$'+('00'.repeat(64)));
+  const email=String(data.email||'').trim().toLowerCase(),password=String(data.password||'');const user=await store.userByEmail(email);const good=user?await passwordMatches(password,user.password_hash):await passwordMatches(password,'scrypt$32768$'+('00'.repeat(16))+'$'+('00'.repeat(64)));
   if(!good)return fail(res,401,'Email or password was not recognized.');
   if(!user.verified)return fail(res,403,'Please verify your email before signing in.');
-  const csrf=createSession(res,user.id);return respond(res,200,{user:publicUser(user),csrf});
+  const csrf=await createSession(res,user.id);return respond(res,200,{user:publicUser(user),csrf});
  }
  if(path==='/api/auth/resend-verification'){
-  const email=String(data.email||'').trim().toLowerCase();const user=prepared.userByEmail.get(email);
+  const email=String(data.email||'').trim().toLowerCase();const user=await store.userByEmail(email);
   if(user&&!user.verified)await sendAccountLink(user,'verify');
   return respond(res,200,{message:'If verification is pending, a new email has been sent.'});
  }
  if(path==='/api/auth/forgot'){
-  const email=String(data.email||'').trim().toLowerCase();const user=prepared.userByEmail.get(email);if(user)await sendAccountLink(user,'reset');return respond(res,200,{message:'If an account exists, a recovery link has been sent.'});
+  const email=String(data.email||'').trim().toLowerCase();const user=await store.userByEmail(email);if(user)await sendAccountLink(user,'reset');return respond(res,200,{message:'If an account exists, a recovery link has been sent.'});
  }
  if(path==='/api/auth/verify'){
-  const t=prepared.token.get(hash(String(data.token||'')));if(!t||t.kind!=='verify'||t.expires_at<now())return fail(res,400,'Verification link is invalid or has expired.');
-  db.prepare('UPDATE users SET verified=1 WHERE id=?').run(t.user_id);db.prepare('DELETE FROM email_tokens WHERE user_id=? AND kind=?').run(t.user_id,'verify');return respond(res,200,{message:'Email verified. You can now sign in.'});
+  const t=await store.emailToken(hash(String(data.token||'')));if(!t||t.kind!=='verify'||t.expires_at<now())return fail(res,400,'Verification link is invalid or has expired.');
+  await store.markVerified(t.user_id);await store.deleteEmailTokens(t.user_id,'verify');return respond(res,200,{message:'Email verified. You can now sign in.'});
  }
  if(path==='/api/auth/reset'){
-  const t=prepared.token.get(hash(String(data.token||''))),password=String(data.password||'');if(!t||t.kind!=='reset'||t.expires_at<now())return fail(res,400,'Recovery link is invalid or has expired.');if(password.length<12||password.length>200)return fail(res,400,'Password must be at least 12 characters.');const h=await passwordHash(password);
-  db.prepare('UPDATE users SET password_hash=?,verified=1 WHERE id=?').run(h,t.user_id);db.prepare('DELETE FROM email_tokens WHERE user_id=?').run(t.user_id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(t.user_id);return respond(res,200,{message:'Password changed. You can sign in.'});
+  const t=await store.emailToken(hash(String(data.token||''))),password=String(data.password||'');if(!t||t.kind!=='reset'||t.expires_at<now())return fail(res,400,'Recovery link is invalid or has expired.');if(password.length<12||password.length>200)return fail(res,400,'Password must be at least 12 characters.');const h=await passwordHash(password);
+  await store.setPassword(t.user_id,h,true);await store.deleteEmailTokens(t.user_id);await store.deleteSessionsForUser(t.user_id);return respond(res,200,{message:'Password changed. You can sign in.'});
  }
  if(!s)return fail(res,401,'Sign in required.');
- if(path==='/api/auth/logout'){db.prepare('DELETE FROM sessions WHERE token_hash=?').run(s.tokenHash);clearCookie(res);return respond(res,200,{ok:true});}
+ if(path==='/api/auth/logout'){await store.deleteSession(s.tokenHash);clearCookie(res);return respond(res,200,{ok:true});}
  if(path==='/api/auth/change-password'){
-  const u=prepared.userByEmail.get(s.email);if(!await passwordMatches(String(data.currentPassword||''),u.password_hash))return fail(res,403,'Current password is incorrect.');const next=String(data.newPassword||'');if(next.length<12||next.length>200)return fail(res,400,'New password must be at least 12 characters.');const h=await passwordHash(next);db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(h,s.user_id);db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').run(s.user_id,s.tokenHash);return respond(res,200,{message:'Password changed; other sessions signed out.'});
+  const u=await store.userByEmail(s.email);if(!await passwordMatches(String(data.currentPassword||''),u.password_hash))return fail(res,403,'Current password is incorrect.');const next=String(data.newPassword||'');if(next.length<12||next.length>200)return fail(res,400,'New password must be at least 12 characters.');const h=await passwordHash(next);await store.setPassword(s.user_id,h,false);await store.deleteOtherSessions(s.user_id,s.tokenHash);return respond(res,200,{message:'Password changed; other sessions signed out.'});
  }
  if(path==='/api/account'&&req.method==='DELETE'){
-  const u=prepared.userByEmail.get(s.email);if(!await passwordMatches(String(data.password||''),u.password_hash))return fail(res,403,'Password is incorrect.');db.prepare('DELETE FROM users WHERE id=?').run(s.user_id);clearCookie(res);return respond(res,200,{message:'Account and saved workspace deleted.'});
+  const u=await store.userByEmail(s.email);if(!await passwordMatches(String(data.password||''),u.password_hash))return fail(res,403,'Password is incorrect.');await store.deleteUser(s.user_id);clearCookie(res);return respond(res,200,{message:'Account and saved workspace deleted.'});
  }
  return fail(res,404,'Unknown authentication route.');
 }
 function validWorkspace(x){return x&&typeof x==='object'&&!Array.isArray(x)&&x.version===1&&x.settings&&typeof x.settings==='object'&&['tasks','events','people','meetups','rituals','modes','recipes','mealPlans'].every(k=>Array.isArray(x[k]))&&JSON.stringify(x).length<LIMIT;}
-async function workspace(req,res,s){if(!s)return fail(res,401,'Sign in required.');if(req.method==='GET'){const row=prepared.workspace.get(s.user_id);return respond(res,200,{data:row?JSON.parse(row.data):null,revision:row?.revision||0});}
+async function workspace(req,res,s){if(!s)return fail(res,401,'Sign in required.');if(req.method==='GET'){const row=await store.workspace(s.user_id);return respond(res,200,{data:row?.data||null,revision:row?.revision||0});}
  if(req.method!=='PUT')return fail(res,405,'Method not allowed.');if(!sameOrigin(req)||req.headers['x-modo-request']!=='1'||req.headers['x-csrf-token']!==s.csrf)return fail(res,403,'Workspace save blocked by request protection.');
- const input=await readJson(req),revision=input?.revision;if(!Number.isInteger(revision)||revision<0||!validWorkspace(input.data))return fail(res,400,'Workspace contains invalid data or revision.');const serialized=JSON.stringify(input.data);
- const current=prepared.workspace.get(s.user_id);if((current?.revision||0)!==revision)return respond(res,409,{error:'This workspace was updated elsewhere. Reload before saving to avoid overwriting data.',revision:current.revision});
- if(current)db.prepare('UPDATE workspaces SET revision=?,data=?,updated_at=? WHERE user_id=? AND revision=?').run(revision+1,serialized,now(),s.user_id,revision);
- else db.prepare('INSERT INTO workspaces(user_id,revision,data,updated_at) VALUES(?,?,?,?)').run(s.user_id,1,serialized,now());
+ const input=await readJson(req),revision=input?.revision;if(!Number.isInteger(revision)||revision<0||!validWorkspace(input.data))return fail(res,400,'Workspace contains invalid data or revision.');
+ const current=await store.workspace(s.user_id);if((current?.revision||0)!==revision)return respond(res,409,{error:'This workspace was updated elsewhere. Reload before saving to avoid overwriting data.',revision:current?.revision||0});
+ if(current){const saved=await store.updateWorkspace(s.user_id,revision,revision+1,input.data,now());if(!saved){const again=await store.workspace(s.user_id);return respond(res,409,{error:'This workspace was updated elsewhere. Reload before saving to avoid overwriting data.',revision:again?.revision||0});}}
+ else await store.insertWorkspace(s.user_id,1,input.data,now());
  return respond(res,200,{revision:revision+1});
 }
 function normalizeAppleUrl(value){let str=String(value||'').trim();if(str.startsWith('webcal://'))str='https://'+str.slice(9);const u=new URL(str);if(u.protocol!=='https:'||!/^p\d+-caldav\.icloud\.com$/i.test(u.hostname)||!u.pathname.startsWith('/published/')||u.port||u.username||u.password||u.search||u.hash)throw Error('Only public iCloud links supported.');return u;}
@@ -131,12 +131,14 @@ function staticFile(req,res,path){
 }
 const server=http.createServer(async(req,res)=>{try{
  const path=new URL(req.url,'http://localhost').pathname;
- if(path==='/api/health'&&req.method==='GET')return respond(res,200,{status:'ok'});
- const s=path.startsWith('/api/')?sessionOf(req):null;
+ if(path==='/api/health'&&req.method==='GET')return respond(res,200,{status:'ok',database:store.kind});
+ const s=path.startsWith('/api/')?await sessionOf(req):null;
  if(path==='/api/calendar-feed')return await feed(req,res,s);
  if(path.startsWith('/api/auth/')||path==='/api/account')return await auth(req,res,path,s);
  if(path==='/api/workspace')return await workspace(req,res,s);
  if(path.startsWith('/api/'))return fail(res,404,'Unknown endpoint.');
  return staticFile(req,res,path);
  }catch(err){console.error('Request error',err?.message);if(!res.headersSent)fail(res,err?.status||500,err?.status?err.message:'Server error.');else res.end();}});
-server.listen(PORT,HOST,()=>console.log(`MODO v3 ready at http://${HOST}:${PORT}; data: ${DATA_DIR}; email: ${EMAIL_READY?'enabled':'dev mode'}`));
+await store.prepare();
+if(store.kind==='supabase'){const imported=await importLocalSqlite(store.client,join(DATA_DIR,'modo.sqlite'));if(imported.copied)console.log(`Copied ${imported.copied} local account${imported.copied===1?'':'s'} into Supabase.`);}
+server.listen(PORT,HOST,()=>console.log(`MODO v3 ready at http://${HOST}:${PORT}; database: ${store.kind}; email: ${EMAIL_READY?'enabled':'dev mode'}`));
