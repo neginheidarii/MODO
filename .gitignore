@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+data/
+test-db/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store

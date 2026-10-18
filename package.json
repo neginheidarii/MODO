@@ -1,0 +1,13 @@
+{
+  "name": "modo-lifestyle-app",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "start": "node server.mjs",
+    "test:ui": "python3 tests/functional_test.py",
+    "test:providers": "python3 tests/calendar_connectors_test.py && node tests/outlook_adapter_test.mjs",
+    "test:auth": "python3 tests/auth_e2e.py"
+  }
+}
