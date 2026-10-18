@@ -1,14 +1,16 @@
 /** MODO v3 secure single-instance web server. Node.js >=22.13; recommend Node 24 LTS.
- * Account-isolated SQLite workspaces, password hashing, token sessions, verification and resets.
+ * Accounts and workspaces live in Supabase when configured, otherwise in local SQLite.
  * Configure environment as documented in README before public deployment.
  */
+import {loadLocalEnv} from './env.mjs';
+loadLocalEnv();
 import http from 'node:http';
-import {createReadStream, statSync, mkdirSync} from 'node:fs';
+import {createReadStream, statSync, existsSync} from 'node:fs';
 import {resolve, extname, sep, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomBytes, createHash, scrypt as scryptCallback, timingSafeEqual} from 'node:crypto';
 import {promisify} from 'node:util';
-import {DatabaseSync} from 'node:sqlite';
+import {importLocalSqlite, openStore} from './store.mjs';
 const scrypt=promisify(scryptCallback);
 const ROOT=dirname(fileURLToPath(import.meta.url));
 const PORT=Number(process.env.PORT||8080);
@@ -19,27 +21,14 @@ const DATA_DIR=resolve(process.env.MODO_DATA_DIR||join(ROOT,'data'));
 const EMAIL_READY=!!(process.env.RESEND_API_KEY&&process.env.RESEND_FROM);
 const COOKIE=PRODUCTION?'__Host-modo_session':'modo_session';
 if(PRODUCTION){if(!ORIGIN.startsWith('https://'))throw Error('Production requires APP_ORIGIN=https://your-domain');if(!EMAIL_READY)throw Error('Production requires RESEND_API_KEY and RESEND_FROM for email verification and recovery.');}
-mkdirSync(DATA_DIR,{recursive:true,mode:0o700});
-const db=new DatabaseSync(join(DATA_DIR,'modo.sqlite'));
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,password_hash TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf TEXT NOT NULL,expires_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
-CREATE TABLE IF NOT EXISTS workspaces(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,revision INTEGER NOT NULL,data TEXT NOT NULL,updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS email_tokens(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,kind TEXT NOT NULL,expires_at INTEGER NOT NULL);`);
-const prepared={
- userByEmail:db.prepare('SELECT * FROM users WHERE email=?'),userById:db.prepare('SELECT id,email,display_name,verified FROM users WHERE id=?'),
- session:db.prepare('SELECT s.user_id,s.csrf,s.expires_at,u.email,u.display_name,u.verified FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?'),
- workspace:db.prepare('SELECT data,revision FROM workspaces WHERE user_id=?'),
- token:db.prepare('SELECT user_id,kind,expires_at FROM email_tokens WHERE token_hash=?')
-};
+const store=openStore({dataDir:DATA_DIR});
 const now=()=>Date.now(),random=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const NAME_EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webmanifest':'application/manifest+json','.ico':'image/x-icon'};
 const LIMIT=2_500_000;
 const rate=new Map();
 function rateLimit(key,limit,period){const ts=now(),bucket=rate.get(key)||{ts,count:0};if(ts-bucket.ts>period){bucket.ts=ts;bucket.count=0;}bucket.count++;rate.set(key,bucket);return bucket.count<=limit;}
-setInterval(()=>{const ts=now();for(const [key,v] of rate)if(ts-v.ts>3600_000)rate.delete(key);db.prepare('DELETE FROM sessions WHERE expires_at<?').run(ts);db.prepare('DELETE FROM email_tokens WHERE expires_at<?').run(ts);},3600_000).unref();
+setInterval(()=>{const ts=now();for(const [key,v] of rate)if(ts-v.ts>3600_000)rate.delete(key);store.purgeExpired(ts).catch(err=>console.error('Cleanup failed',err?.message));},3600_000).unref();
 const HEADERS={
  'X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','X-Frame-Options':'DENY',
  'Permissions-Policy':'camera=(), microphone=(), geolocation=(), payment=()',
@@ -51,13 +40,13 @@ function fail(res,status,message){respond(res,status,{error:message});}
 async function readJson(req,limit=LIMIT){if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))throw Object.assign(Error('Expected JSON request body.'),{status:415});let chunks=[],size=0;for await(const part of req){size+=part.length;if(size>limit)throw Object.assign(Error('Request exceeds the size limit.'),{status:413});chunks.push(part);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw Object.assign(Error('Invalid JSON.'),{status:400});}}
 function sameOrigin(req){const reqOrigin=req.headers.origin;if(req.headers['sec-fetch-site']==='cross-site')return false;return reqOrigin===ORIGIN;}
 function tokenOf(req){const cookies=String(req.headers.cookie||'').split(';').map(v=>v.trim());const raw=cookies.find(c=>c.startsWith(`${COOKIE}=`));return raw?.slice(COOKIE.length+1)||'';}
-function sessionOf(req){const token=tokenOf(req);if(!token||token.length>256)return null;const s=prepared.session.get(hash(token));return s?.expires_at>now()&&s.verified?{...s,tokenHash:hash(token)}:null;}
-function createSession(res,userId){const token=random(),csrf=random(),exp=now()+14*86400_000;db.prepare('INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)').run(hash(token),userId,csrf,exp);res.setHeader('Set-Cookie',`${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; ${PRODUCTION?'Secure; ':''}Max-Age=1209600`);return csrf;}
+async function sessionOf(req){const token=tokenOf(req);if(!token||token.length>256)return null;const s=await store.sessionByHash(hash(token));return s?.expires_at>now()&&s.verified?{...s,tokenHash:hash(token)}:null;}
+async function createSession(res,userId){const token=random(),csrf=random(),exp=now()+14*86400_000;await store.insertSession(hash(token),userId,csrf,exp);res.setHeader('Set-Cookie',`${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; ${PRODUCTION?'Secure; ':''}Max-Age=1209600`);return csrf;}
 function clearCookie(res){res.setHeader('Set-Cookie',`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; ${PRODUCTION?'Secure; ':''}Max-Age=0`);}
 async function passwordHash(password){const salt=randomBytes(16);const dk=await scrypt(password,salt,64,{N:32768,r:8,p:1,maxmem:64*1024*1024});return `scrypt$32768$${salt.toString('hex')}$${dk.toString('hex')}`;}
 async function passwordMatches(password,stored){const [,iter,salt,expected]=String(stored).split('$');if(iter!=='32768'||!salt||!expected)return false;const dk=await scrypt(password,Buffer.from(salt,'hex'),64,{N:32768,r:8,p:1,maxmem:64*1024*1024});const compare=Buffer.from(expected,'hex');return compare.length===dk.length&&timingSafeEqual(dk,compare);}
 async function sendEmail(to,subject,html){if(!EMAIL_READY)return false;const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:process.env.RESEND_FROM,to:[to],subject,html})});if(!response.ok){console.error('Email provider error',response.status);return false;}return true;}
-async function sendAccountLink(user,kind){const token=random(),expires=now()+(kind==='verify'?24*3600_000:30*60_000);db.prepare('DELETE FROM email_tokens WHERE user_id=? AND kind=?').run(user.id,kind);db.prepare('INSERT INTO email_tokens(token_hash,user_id,kind,expires_at) VALUES(?,?,?,?)').run(hash(token),user.id,kind,expires);const url=`${ORIGIN}/login.html?mode=${kind}&token=${encodeURIComponent(token)}`;const subject=kind==='verify'?'Verify your MODO email':'Reset your MODO password';const done=await sendEmail(user.email,subject,`<p>${kind==='verify'?'Verify your email address':'Reset your password'} for MODO.</p><p><a href="${url}">Continue securely</a></p><p>This link expires in ${kind==='verify'?'24 hours':'30 minutes'}. If you did not request it, ignore this email.</p>`);if(!PRODUCTION&&!EMAIL_READY)console.log(`[MODO DEV ONLY] ${kind} link for ${user.email}: ${url}`);return done||!PRODUCTION;}
+async function sendAccountLink(user,kind){const token=random(),expires=now()+(kind==='verify'?24*3600_000:30*60_000);await store.replaceEmailToken(user.id,kind,hash(token),expires);const url=`${ORIGIN}/?mode=${kind}&token=${encodeURIComponent(token)}`;const subject=kind==='verify'?'Verify your MODO email':'Reset your MODO password';const done=await sendEmail(user.email,subject,`<p>${kind==='verify'?'Verify your email address':'Reset your password'} for MODO.</p><p><a href="${url}">Continue securely</a></p><p>This link expires in ${kind==='verify'?'24 hours':'30 minutes'}. If you did not request it, ignore this email.</p>`);if(!PRODUCTION&&!EMAIL_READY)console.log(`[MODO DEV ONLY] ${kind} link for ${user.email}: ${url}`);return done||!PRODUCTION;}
 function publicUser(u){return {id:u.id||u.user_id,email:u.email,name:u.display_name};}
 const accountRate=(req,kind)=>rateLimit(`${kind}:${req.socket.remoteAddress||'unknown'}`,kind==='login'?18:kind==='register'?6:10,15*60_000);
 async function auth(req,res,path,s){
@@ -122,7 +111,24 @@ function normalizeAppleUrl(value){let str=String(value||'').trim();if(str.starts
 async function feed(req,res,s){if(!s)return fail(res,401,'Sign in required.');if(req.method!=='POST')return fail(res,405,'POST required.');if(!sameOrigin(req)||req.headers['x-modo-request']!=='1'||req.headers['x-csrf-token']!==s.csrf)return fail(res,403,'Request blocked.');if(!rateLimit('feed:'+s.user_id,30,60_000))return fail(res,429,'Feed request limit reached.');let target;try{target=normalizeAppleUrl((await readJson(req,8192)).url);}catch{return fail(res,400,'Use a public iCloud calendar link.');}
  try{const timeout=AbortSignal.timeout(14_000);let response=await fetch(target.href,{headers:{Accept:'text/calendar'},redirect:'manual',signal:timeout});if(response.status>=300&&response.status<400){const location=response.headers.get('location');if(!location)return fail(res,502,'Unexpected redirect.');target=normalizeAppleUrl(new URL(location,target).href);response=await fetch(target.href,{redirect:'error',signal:timeout});}if(!response.ok)return fail(res,502,'iCloud returned an error.');let bytes=0,chunks=[];for await(const chunk of response.body){bytes+=chunk.length;if(bytes>1_800_000)return fail(res,413,'Feed too large.');chunks.push(chunk);}const ics=Buffer.concat(chunks).toString('utf8');if(!ics.includes('BEGIN:VCALENDAR'))return fail(res,422,'Invalid iCalendar feed.');res.writeHead(200,{...HEADERS,'Content-Type':'text/calendar; charset=utf-8','Cache-Control':'no-store'});res.end(ics);}catch(e){return fail(res,502,'Unable to retrieve this iCloud feed.');}
 }
-function staticFile(req,res,path){if(req.method!=='GET'&&req.method!=='HEAD')return fail(res,405,'Method not allowed.');let requested;try{requested=decodeURIComponent(path);}catch{return fail(res,400,'Invalid path.');}if(requested.includes('\0'))return fail(res,400,'Invalid path.');if(requested==='/'||!requested)requested='/index.html';if(!(['/', '/index.html', '/login.html', '/styles.css', '/app.js', '/boot.js', '/auth.js', '/calendar-connectors.js', '/sw.js', '/manifest.webmanifest'].includes(requested)||/^\/assets\/[a-zA-Z0-9_.-]+$/.test(requested)))return fail(res,404,'Not found.');const target=resolve(ROOT,'.'+requested);if(!target.startsWith(ROOT+sep))return fail(res,403,'Forbidden.');let st;try{st=statSync(target);}catch{return fail(res,404,'Not found.');}if(!st.isFile())return fail(res,404,'Not found.');res.writeHead(200,{...HEADERS,'Content-Type':MIME[extname(target)]||'application/octet-stream','Cache-Control':extname(target)==='.html'||target.endsWith('sw.js')?'no-store':'public, max-age=3600'});if(req.method==='HEAD')return res.end();createReadStream(target).pipe(res);}
+const DIST=resolve(ROOT,'dist');
+function staticFile(req,res,path){
+ if(req.method!=='GET'&&req.method!=='HEAD')return fail(res,405,'Method not allowed.');
+ if(!existsSync(DIST))return fail(res,503,'The app has not been built. Run npm run build, then start the server again.');
+ let requested;try{requested=decodeURIComponent(path);}catch{return fail(res,400,'Invalid path.');}
+ if(requested.includes('\0')||requested.includes('..'))return fail(res,400,'Invalid path.');
+ if(requested==='/login.html'){const q=new URL(req.url,'http://localhost').search;res.writeHead(302,{Location:'/'+q});return res.end();}
+ const rel=(!requested||requested==='/')?'/index.html':requested;
+ let target=resolve(DIST,'.'+rel);
+ if(!target.startsWith(DIST+sep)&&target!==DIST)return fail(res,403,'Forbidden.');
+ let st;try{st=statSync(target);}catch{st=null;}
+ if(!st?.isFile()){if(rel.includes('.'))return fail(res,404,'Not found.');target=resolve(DIST,'index.html');try{st=statSync(target);}catch{return fail(res,404,'Not found.');}}
+ const hashed=/-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/i.test(target);
+ const cache=extname(target)==='.html'?'no-store':hashed?'public, max-age=31536000, immutable':'public, max-age=3600';
+ res.writeHead(200,{...HEADERS,'Content-Type':MIME[extname(target)]||'application/octet-stream','Cache-Control':cache});
+ if(req.method==='HEAD')return res.end();
+ createReadStream(target).pipe(res);
+}
 const server=http.createServer(async(req,res)=>{try{
  const path=new URL(req.url,'http://localhost').pathname;
  if(path==='/api/health'&&req.method==='GET')return respond(res,200,{status:'ok'});

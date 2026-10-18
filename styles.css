@@ -265,9 +265,12 @@ select { cursor:pointer; }
 .dialog-header { display:flex; align-items:start; justify-content:space-between; gap:16px; margin-bottom:20px; }
 .dialog-header h2 { font-size:22px; margin:3px 0 4px; font-weight:600; letter-spacing:-.7px; }
 .dialog-header p { font-size:11px; margin:0; color:var(--text-muted); }
-.rule-builder { display:grid; gap:9px; }
-.rule-editor { display:grid; grid-template-columns:minmax(0,1.3fr) 80px minmax(75px,1fr) 36px; align-items:center; gap:7px; }
-.rule-editor input { padding:8px; }
+.rule-builder { display:grid; gap:12px; }
+.rule-block { display:grid; gap:7px; padding-bottom:12px; border-bottom:1px solid var(--border); }
+.rule-block:last-child { border-bottom:0; padding-bottom:0; }
+.rule-editor { display:grid; grid-template-columns:minmax(0,1fr) 168px 36px; align-items:center; gap:7px; }
+.rule-editor input,.rule-editor select,.rule-measure input { padding:8px; }
+.rule-measure { display:grid; grid-template-columns:96px minmax(0,1fr); gap:7px; }
 .more-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:13px; }
 .more-tile { min-height:115px; border:1px solid var(--border); background:var(--surface); border-radius:16px; padding:19px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; text-align:left; }
 .more-tile:hover { background:var(--hover); }
@@ -275,8 +278,12 @@ select { cursor:pointer; }
 .more-tile span { color:var(--text-muted); font-size:10px; line-height:1.5; }
 .mobile-nav,.mobile-top-brand { display:none; }
 .note { background:var(--surface-muted); border:1px solid var(--border); border-radius:13px; color:var(--text-muted); font-size:11px; padding:13px; line-height:1.6; }
-.inline-form { display:flex; gap:8px; }
-.inline-form > input { flex:1; }
+.task-groups { display:grid; gap:18px; }
+.task-group-title { margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase; color:var(--text-muted); display:flex; justify-content:space-between; align-items:baseline; }
+.task-group-title span { letter-spacing:0; font-weight:600; }
+.inline-form { display:flex; gap:8px; flex-wrap:wrap; }
+.inline-form > input { flex:1; min-width:160px; }
+.inline-form > select { width:148px; }
 .fab { display:none; }
 #toast-region { position:fixed; right:22px; bottom:22px; display:grid; gap:8px; z-index:200; pointer-events:none; }
 .toast { background:var(--night); color:var(--night-on); box-shadow:0 12px 40px rgba(0,0,0,.14); border-radius:12px; padding:12px 16px; font-size:12px; font-weight:600; max-width:340px; }
@@ -313,15 +320,14 @@ select { cursor:pointer; }
   .calendar-month { gap:3px; } .day-number { font-size:10px; width:19px; height:19px; } .mini-event { font-size:8px; padding:2px 3px; } .calendar-week-label { font-size:9px; padding:7px 0; }
   .stat-row { gap:7px; } .stat-tile { padding:12px; } .stat-tile strong { font-size:19px; } .stat-tile span { font-size:9px; }
   .dialog { padding:20px 17px; } .form-grid { grid-template-columns:1fr; } .form-grid .full { grid-column:auto; }
-  .rule-editor { grid-template-columns:1fr 60px 68px 28px; gap:5px; } .rule-editor input { padding:7px 4px; font-size:10px; }
+  .rule-editor { grid-template-columns:minmax(0,1fr) 36px; gap:6px; } .rule-editor select { grid-column:1 / -1; } .rule-measure { grid-template-columns:72px minmax(0,1fr); } .rule-editor input,.rule-measure input { padding:8px; font-size:13px; }
   .week-columns { grid-template-columns:repeat(7,minmax(110px,1fr)); }
 }
 @media(max-width:365px){ .person-grid { grid-template-columns:1fr; } .mobile-nav button { font-size:9px; } .calendar-cell { min-height:57px; } .calendar-cell .mini-event:nth-of-type(n+2) { display:none; } .demo-tag { padding:5px; font-size:9px; } }
 @media(prefers-reduced-motion:reduce){ *,*:before,*:after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }
 .heat-cell.future { opacity:.3; cursor:default; }
 @media(max-width:670px) {
-  .topbar-left .demo-tag { font-size:0; gap:4px; padding:6px 8px; }
-  .topbar-left .demo-tag::after { content:'Demo'; font-size:10px; }
+  .topbar-left .demo-tag { font-size:10px; gap:4px; padding:6px 8px; }
   .topbar-actions { gap:1px; }
   .topbar-actions .icon-button { width:35px; height:36px; }
 }

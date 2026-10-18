@@ -5,9 +5,19 @@
   "type": "module",
   "engines": {"node": ">=22.13.0"},
   "scripts": {
+    "dev": "vite --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
     "start": "node server.mjs",
     "test:ui": "python3 tests/functional_test.py",
     "test:providers": "python3 tests/calendar_connectors_test.py && node tests/outlook_adapter_test.mjs",
     "test:auth": "python3 tests/auth_e2e.py"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^6.3.6"
   }
 }

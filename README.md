@@ -6,16 +6,19 @@ MODO is a responsive Olive & Linen lifestyle web application containing **Today,
 
 **Status:** Runnable multi-account release candidate for a **single persistent server**, with production security groundwork. It is **not a completed, security-audited public SaaS launch**. Read the deployment checklist below.
 
-### Run locally (no dependencies)
+### Run locally
 
-Node.js 22.13+ (Node 24 LTS recommended):
+Node.js 22.13+ (Node 24 LTS recommended). The interface is a React app in `client/`; the Node server keeps accounts and workspaces.
 
 ```bash
-cd modo-v3
-node server.mjs
+npm install
+npm run build
+npm start
 ```
 
 Visit <http://localhost:8080>. Select **Create account** to sign up, then use MODO.
+
+For interface work with live reload, run `npm start` in one terminal and `npm run dev` in another, then open <http://localhost:5173>. The dev server proxies the API to port 8080.
 
 - With no email provider configured **in development only**, new users are immediately verified. For local password recovery, the development server prints a one-time recovery link to its console. Do not use this behaviour for production.
 - Each account gets a new, empty workspace. The UI has no prefilled fictional people or challenges.
