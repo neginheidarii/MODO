@@ -148,10 +148,16 @@ function supabaseStore(url, serviceKey) {
   };
 }
 
+function missingSupabaseStore() {
+  const fail = () => { const err = Error('Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the Vercel project settings.'); err.status = 503; throw err; };
+  return { kind: 'unconfigured', async prepare() { fail(); }, async purgeExpired() {}, async userByEmail() { fail(); }, async insertUser() { fail(); }, async deleteUser() { fail(); }, async markVerified() { fail(); }, async setPassword() { fail(); }, async sessionByHash() { fail(); }, async insertSession() { fail(); }, async deleteSession() { fail(); }, async deleteOtherSessions() { fail(); }, async deleteSessionsForUser() { fail(); }, async workspace() { fail(); }, async insertWorkspace() { fail(); }, async updateWorkspace() { fail(); }, async emailToken() { fail(); }, async replaceEmailToken() { fail(); }, async deleteEmailTokens() { fail(); } };
+}
+
 export function openStore({ dataDir }) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (url && key) return supabaseStore(url, key);
+  if (process.env.VERCEL) return missingSupabaseStore();
   return sqliteStore(dataDir);
 }
 

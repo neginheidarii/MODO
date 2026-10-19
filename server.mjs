@@ -20,7 +20,8 @@ const ORIGIN=(process.env.APP_ORIGIN||`http://localhost:${PORT}`).replace(/\/$/,
 const DATA_DIR=resolve(process.env.MODO_DATA_DIR||join(ROOT,'data'));
 const EMAIL_READY=!!(process.env.RESEND_API_KEY&&process.env.RESEND_FROM);
 const COOKIE=PRODUCTION?'__Host-modo_session':'modo_session';
-if(PRODUCTION){if(!ORIGIN.startsWith('https://'))throw Error('Production requires APP_ORIGIN=https://your-domain');if(!EMAIL_READY)throw Error('Production requires RESEND_API_KEY and RESEND_FROM for email verification and recovery.');}
+const ON_VERCEL=Boolean(process.env.VERCEL);
+if(PRODUCTION&&!ON_VERCEL){if(!ORIGIN.startsWith('https://'))throw Error('Production requires APP_ORIGIN=https://your-domain');if(!EMAIL_READY)throw Error('Production requires RESEND_API_KEY and RESEND_FROM for email verification and recovery.');}
 const store=openStore({dataDir:DATA_DIR});
 const now=()=>Date.now(),random=()=>randomBytes(32).toString('base64url'),hash=s=>createHash('sha256').update(s).digest('hex');
 const NAME_EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,7 +39,7 @@ if(PRODUCTION)HEADERS['Strict-Transport-Security']='max-age=31536000; includeSub
 function respond(res,status,payload,extra={}){res.writeHead(status,{...HEADERS,'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...extra});res.end(JSON.stringify(payload));}
 function fail(res,status,message){respond(res,status,{error:message});}
 async function readJson(req,limit=LIMIT){if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))throw Object.assign(Error('Expected JSON request body.'),{status:415});let chunks=[],size=0;for await(const part of req){size+=part.length;if(size>limit)throw Object.assign(Error('Request exceeds the size limit.'),{status:413});chunks.push(part);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw Object.assign(Error('Invalid JSON.'),{status:400});}}
-function sameOrigin(req){const reqOrigin=req.headers.origin;if(req.headers['sec-fetch-site']==='cross-site')return false;return reqOrigin===ORIGIN;}
+function sameOrigin(req){const reqOrigin=req.headers.origin;if(req.headers['sec-fetch-site']==='cross-site')return false;const allowed=new Set([ORIGIN]);for(const host of [process.env.VERCEL_URL,process.env.VERCEL_BRANCH_URL,process.env.VERCEL_PROJECT_PRODUCTION_URL])if(host)allowed.add(`https://${host}`);return allowed.has(reqOrigin);}
 function tokenOf(req){const cookies=String(req.headers.cookie||'').split(';').map(v=>v.trim());const raw=cookies.find(c=>c.startsWith(`${COOKIE}=`));return raw?.slice(COOKIE.length+1)||'';}
 async function sessionOf(req){const token=tokenOf(req);if(!token||token.length>256)return null;const s=await store.sessionByHash(hash(token));return s?.expires_at>now()&&s.verified?{...s,tokenHash:hash(token)}:null;}
 async function createSession(res,userId){const token=random(),csrf=random(),exp=now()+14*86400_000;await store.insertSession(hash(token),userId,csrf,exp);res.setHeader('Set-Cookie',`${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; ${PRODUCTION?'Secure; ':''}Max-Age=1209600`);return csrf;}
@@ -129,8 +130,12 @@ function staticFile(req,res,path){
  if(req.method==='HEAD')return res.end();
  createReadStream(target).pipe(res);
 }
-const server=http.createServer(async(req,res)=>{try{
- const path=new URL(req.url,'http://localhost').pathname;
+let starting;
+function ready(){starting??=(async()=>{await store.prepare();if(store.kind==='supabase'&&!ON_VERCEL){const imported=await importLocalSqlite(store.client,join(DATA_DIR,'modo.sqlite'));if(imported.copied)console.log(`Copied ${imported.copied} local account${imported.copied===1?'':'s'} into Supabase.`);}})();return starting;}
+function requestPath(req){try{const pathname=new URL(req.url||'/','http://localhost').pathname;if(pathname.startsWith('/api/'))return pathname;}catch{/* use the function path below */}const parts=req.query?.path;return Array.isArray(parts)?`/api/${parts.map(part=>encodeURIComponent(part)).join('/')}`:(req.url||'/');}
+export async function handleRequest(req,res){try{
+ await ready();
+ const path=requestPath(req);
  if(path==='/api/health'&&req.method==='GET')return respond(res,200,{status:'ok',database:store.kind});
  const s=path.startsWith('/api/')?await sessionOf(req):null;
  if(path==='/api/calendar-feed')return await feed(req,res,s);
@@ -138,7 +143,6 @@ const server=http.createServer(async(req,res)=>{try{
  if(path==='/api/workspace')return await workspace(req,res,s);
  if(path.startsWith('/api/'))return fail(res,404,'Unknown endpoint.');
  return staticFile(req,res,path);
- }catch(err){console.error('Request error',err?.message);if(!res.headersSent)fail(res,err?.status||500,err?.status?err.message:'Server error.');else res.end();}});
-await store.prepare();
-if(store.kind==='supabase'){const imported=await importLocalSqlite(store.client,join(DATA_DIR,'modo.sqlite'));if(imported.copied)console.log(`Copied ${imported.copied} local account${imported.copied===1?'':'s'} into Supabase.`);}
-server.listen(PORT,HOST,()=>console.log(`MODO v3 ready at http://${HOST}:${PORT}; database: ${store.kind}; email: ${EMAIL_READY?'enabled':'dev mode'}`));
+ }catch(err){console.error('Request error',err?.message);if(!res.headersSent)fail(res,err?.status||500,err?.status?err.message:'Server error.');else res.end();}}
+const invokedDirectly=process.argv[1]&&import.meta.url===new URL(process.argv[1],'file:').href||process.argv[1]&&fileURLToPath(import.meta.url)===resolve(process.argv[1]);
+if(invokedDirectly){await ready();http.createServer(handleRequest).listen(PORT,HOST,()=>console.log(`MODO v3 ready at http://${HOST}:${PORT}; database: ${store.kind}; email: ${EMAIL_READY?'enabled':'dev mode'}`));}

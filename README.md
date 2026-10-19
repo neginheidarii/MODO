@@ -18,6 +18,10 @@ npm start
 
 Visit <http://localhost:8080>. Select **Create account** to sign up, then use MODO.
 
+### Vercel
+
+Vercel serves the built interface from `dist` and runs the API as a serverless function. A local `.env` file is not uploaded. In the Vercel project settings, add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_ORIGIN` set to the site’s exact `https://` address. Add `RESEND_API_KEY` and `RESEND_FROM` when you want verification and password-reset email. Apply `supabase/migrations/20261018120000_modo.sql` in the Supabase SQL editor before the first deploy that uses that project.
+
 ### Supabase
 
 Importing the GitHub repo into Supabase does not create the tables. In the Supabase SQL editor, run `supabase/migrations/20261018120000_modo.sql`. Then copy the project URL and **service_role** key into a local `.env` file (see `.env.example`). Restart `npm start`.
