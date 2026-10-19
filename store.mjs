@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { createClient } from '@supabase/supabase-js';
+
+function loadSqlite() {
+  return createRequire(import.meta.url)('node:sqlite');
+}
 
 function userFrom(row) {
   if (!row) return null;
@@ -9,6 +13,7 @@ function userFrom(row) {
 }
 
 function sqliteStore(dataDir) {
+  const { DatabaseSync } = loadSqlite();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(dataDir, 'modo.sqlite'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -166,6 +171,7 @@ export async function importLocalSqlite(supabase, sqlitePath) {
   const { count, error } = await supabase.from('users').select('id', { count: 'exact', head: true });
   if (error) throw Error('Could not read Supabase before copying the local database.');
   if (count) return { copied: 0, skipped: 'supabase-already-has-accounts' };
+  const { DatabaseSync } = loadSqlite();
   const db = new DatabaseSync(sqlitePath, { readOnly: true });
   const users = db.prepare('SELECT id,email,display_name,password_hash,verified,created_at FROM users').all();
   const workspaces = db.prepare('SELECT user_id,revision,data,updated_at FROM workspaces').all();

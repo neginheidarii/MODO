@@ -20,7 +20,7 @@ Visit <http://localhost:8080>. Select **Create account** to sign up, then use MO
 
 ### Vercel
 
-Vercel serves the built interface from `dist` and runs the API as a serverless function. A local `.env` file is not uploaded. In the Vercel project settings, add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_ORIGIN` set to the site’s exact `https://` address. Add `RESEND_API_KEY` and `RESEND_FROM` when you want verification and password-reset email. Apply `supabase/migrations/20261018120000_modo.sql` in the Supabase SQL editor before the first deploy that uses that project.
+Vercel serves the built interface from `dist` and runs the API as a serverless function. A local `.env` file is not uploaded. In the Vercel project settings, add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_ORIGIN` set to the site’s exact `https://` address. Add `RESEND_API_KEY` and `RESEND_FROM` when you want verification and password-reset email. Apply `supabase/migrations/20261018120000_modo.sql` in the Supabase SQL editor before the first deploy that uses that project. In the same project, open Settings → Deployment Protection and turn Vercel Authentication off. While that lock is on, the page loads and the API answers with Vercel’s login wall, which leaves the app on the connection error.
 
 ### Supabase
 

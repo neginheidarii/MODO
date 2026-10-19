@@ -1,28 +1,48 @@
+const PRIVATE_LINK = 'This Vercel link is private. Open the project in Vercel, go to Settings, then Deployment Protection, and turn Vercel Authentication off. Reload after saving.';
+
+function blocked(response) {
+  return response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400);
+}
+
 async function parse(response) {
+  if (blocked(response)) throw new Error(PRIVATE_LINK);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Request failed. Please try again.');
+  if (data.protection) throw new Error(PRIVATE_LINK);
+  if (!response.ok) throw new Error(data.error || data.message || `Request failed (${response.status}). Please try again.`);
   return data;
 }
 
+function apiFetch(path, options = {}) {
+  return fetch(path, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    redirect: 'manual',
+    ...options,
+    headers: { Accept: 'application/json', ...(options.headers || {}) }
+  });
+}
+
 export async function authRequest(path, body) {
-  const response = await fetch(`./api/auth/${path}`, {
+  const response = await apiFetch(`./api/auth/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-MODO-Request': '1' },
-    body: JSON.stringify(body),
-    credentials: 'same-origin',
-    cache: 'no-store'
+    body: JSON.stringify(body)
   });
   return parse(response);
 }
 
 export async function getSession() {
-  const response = await fetch('./api/auth/session', { credentials: 'same-origin', cache: 'no-store' });
-  if (response.status === 401) return null;
+  const response = await apiFetch('./api/auth/session');
+  if (response.status === 401) {
+    const data = await response.clone().json().catch(() => ({}));
+    if (data.protection) throw new Error(PRIVATE_LINK);
+    return null;
+  }
   return parse(response);
 }
 
 export async function getWorkspace() {
-  const response = await fetch('./api/workspace', { credentials: 'same-origin', cache: 'no-store' });
+  const response = await apiFetch('./api/workspace');
   if (response.status === 401) return { status: 401 };
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Unable to open your workspace.');
@@ -30,10 +50,8 @@ export async function getWorkspace() {
 }
 
 export async function putWorkspace(revision, data, csrf) {
-  const response = await fetch('./api/workspace', {
+  const response = await apiFetch('./api/workspace', {
     method: 'PUT',
-    credentials: 'same-origin',
-    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'X-MODO-Request': '1', 'X-CSRF-Token': csrf },
     body: JSON.stringify({ revision, data })
   });
@@ -42,9 +60,8 @@ export async function putWorkspace(revision, data, csrf) {
 }
 
 export async function accountRequest(path, body, csrf, method = 'POST') {
-  const response = await fetch(path, {
+  const response = await apiFetch(path, {
     method,
-    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-MODO-Request': '1', 'X-CSRF-Token': csrf },
     body: JSON.stringify(body)
   });
@@ -52,9 +69,8 @@ export async function accountRequest(path, body, csrf, method = 'POST') {
 }
 
 export async function fetchCalendarFeed(url, csrf) {
-  const response = await fetch('./api/calendar-feed', {
+  const response = await apiFetch('./api/calendar-feed', {
     method: 'POST',
-    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-MODO-Request': '1', 'X-CSRF-Token': csrf },
     body: JSON.stringify({ url })
   });
