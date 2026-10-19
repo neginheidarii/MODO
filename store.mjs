@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS email_tokens(token_hash TEXT PRIMARY KEY,user_id TEXT
 
 function raise(error) {
   if (!error) return;
-  const err = Error(error.code === '23505' ? 'That record already exists.' : 'Database request failed.');
-  err.status = error.code === '23505' ? 409 : 500;
+  const err = Error(error.code === '23505' ? 'That record already exists.' : error.code === '42501' ? 'The Supabase key cannot write accounts. Use the secret key from Project Settings → API Keys.' : 'Database request failed.');
+  err.status = error.code === '23505' ? 409 : error.code === '42501' ? 503 : 500;
   err.code = error.code === '23505' ? 'exists' : 'db';
   console.error('Supabase error', error.code || 'unknown');
   throw err;
@@ -155,8 +155,19 @@ function supabaseStore(url, serviceKey) {
   };
 }
 
-function missingSupabaseStore() {
-  const fail = () => { const err = Error('Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the Vercel project settings.'); err.status = 503; throw err; };
+function publishableKey(key) {
+  if (key.startsWith('sb_publishable_')) return true;
+  if (!key.startsWith('eyJ')) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(key.split('.')[1], 'base64url').toString());
+    return payload.role === 'anon';
+  } catch {
+    return false;
+  }
+}
+
+function missingSupabaseStore(message = 'Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the Vercel project settings.') {
+  const fail = () => { const err = Error(message); err.status = 503; throw err; };
   return { kind: 'unconfigured', async prepare() { fail(); }, async purgeExpired() {}, async userByEmail() { fail(); }, async insertUser() { fail(); }, async deleteUser() { fail(); }, async markVerified() { fail(); }, async setPassword() { fail(); }, async sessionByHash() { fail(); }, async insertSession() { fail(); }, async deleteSession() { fail(); }, async deleteOtherSessions() { fail(); }, async deleteSessionsForUser() { fail(); }, async workspace() { fail(); }, async insertWorkspace() { fail(); }, async updateWorkspace() { fail(); }, async emailToken() { fail(); }, async replaceEmailToken() { fail(); }, async deleteEmailTokens() { fail(); } };
 }
 
@@ -173,6 +184,7 @@ function supabaseProjectUrl(value) {
 export function openStore({ dataDir }) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (url && key && publishableKey(key)) return missingSupabaseStore('The Supabase key cannot write accounts. In Supabase, open Project Settings → API Keys and put the secret key in SUPABASE_SERVICE_ROLE_KEY.');
   if (url && key) return supabaseStore(supabaseProjectUrl(url), key);
   if (process.env.VERCEL) return missingSupabaseStore();
   return sqliteStore(dataDir);

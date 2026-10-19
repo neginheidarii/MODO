@@ -26,7 +26,7 @@ Vercel serves the built interface from `dist` and runs the API as a serverless f
 
 Importing the GitHub repo into Supabase does not create the tables. In the Supabase SQL editor, run `supabase/migrations/20261018120000_modo.sql`. Then copy the project URL and **service_role** key into a local `.env` file (see `.env.example`). Restart `npm start`.
 
-The server keeps sign-in, passwords, and sessions. Supabase stores the accounts and workspaces. The service role key stays on the server and is never sent to the browser. Row level security is enabled with no public policies, so the anon key cannot read the tables. On the first start with Supabase configured, accounts already in `data/modo.sqlite` are copied across if the Supabase project is still empty. After that, sign in with the same email and password.
+The server keeps sign-in, passwords, and sessions. Supabase stores the accounts and workspaces. `SUPABASE_SERVICE_ROLE_KEY` must be the secret key from Project Settings → API Keys. The publishable key is blocked by row level security and cannot create accounts. The secret key stays on the server and is never sent to the browser. On the first start with Supabase configured, accounts already in `data/modo.sqlite` are copied across if the Supabase project is still empty. After that, sign in with the same email and password.
 
 For interface work with live reload, run `npm start` in one terminal and `npm run dev` in another, then open <http://localhost:5173>. The dev server proxies the API to port 8080.
 
