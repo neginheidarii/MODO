@@ -132,7 +132,8 @@ function staticFile(req,res,path){
 }
 let starting;
 function ready(){starting??=(async()=>{await store.prepare();if(store.kind==='supabase'&&!ON_VERCEL){const imported=await importLocalSqlite(store.client,join(DATA_DIR,'modo.sqlite'));if(imported.copied)console.log(`Copied ${imported.copied} local account${imported.copied===1?'':'s'} into Supabase.`);}})();return starting;}
-function requestPath(req){try{const pathname=new URL(req.url||'/','http://localhost').pathname;if(pathname.startsWith('/api/'))return pathname;}catch{/* use the function path below */}const parts=req.query?.path;return Array.isArray(parts)?`/api/${parts.map(part=>encodeURIComponent(part)).join('/')}`:(req.url||'/');}
+function pathFrom(value){try{const url=new URL(String(value),'http://localhost');if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/index'&&url.pathname!=='/api/index.js')return url.pathname;const routed=url.searchParams.get('__modo');if(routed&&!routed.includes('..'))return `/api/${routed.replace(/^\/+/,'')}`;}catch{/* ignore a malformed url */}return '';}
+export function requestPath(req){for(const value of [req.url,req.headers?.['x-forwarded-uri'],req.headers?.['x-invoke-path'],req.headers?.['x-original-url']]){const path=value?pathFrom(value):'';if(path)return path;}const routed=req.query?.__modo;if(typeof routed==='string'&&routed&&!routed.includes('..'))return `/api/${routed.replace(/^\/+/,'')}`;const parts=req.query?.path;return Array.isArray(parts)?`/api/${parts.map(part=>encodeURIComponent(part)).join('/')}`:(req.url||'/');}
 export async function handleRequest(req,res){try{
  await ready();
  const path=requestPath(req);

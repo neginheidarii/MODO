@@ -4,11 +4,18 @@ function blocked(response) {
   return response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400);
 }
 
+function failureText(data, status) {
+  if (typeof data?.error === 'string') return data.error;
+  if (typeof data?.error?.message === 'string') return data.error.message;
+  if (typeof data?.message === 'string') return data.message;
+  return `Request failed (${status}). Please try again.`;
+}
+
 async function parse(response) {
   if (blocked(response)) throw new Error(PRIVATE_LINK);
   const data = await response.json().catch(() => ({}));
   if (data.protection) throw new Error(PRIVATE_LINK);
-  if (!response.ok) throw new Error(data.error || data.message || `Request failed (${response.status}). Please try again.`);
+  if (!response.ok) throw new Error(failureText(data, response.status));
   return data;
 }
 
@@ -45,7 +52,7 @@ export async function getWorkspace() {
   const response = await apiFetch('./api/workspace');
   if (response.status === 401) return { status: 401 };
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Unable to open your workspace.');
+  if (!response.ok) throw new Error(failureText(data, response.status));
   return { status: response.status, ...data };
 }
 
@@ -76,7 +83,7 @@ export async function fetchCalendarFeed(url, csrf) {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'Unable to retrieve this iCloud feed.');
+    throw new Error(failureText(data, response.status));
   }
   return response.text();
 }

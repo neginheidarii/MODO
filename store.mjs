@@ -91,7 +91,9 @@ function supabaseStore(url, serviceKey) {
       const { error } = await supabase.from('users').select('id').limit(1);
       if (error) {
         console.error('Supabase connection failed', error.code || 'unknown');
-        throw Error('Could not reach Supabase. Apply supabase/migrations/20261018120000_modo.sql, then check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+        const err = Error('Could not reach Supabase. Apply supabase/migrations/20261018120000_modo.sql, then check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+        err.status = 503;
+        throw err;
       }
     },
     async purgeExpired(now) {
@@ -158,10 +160,20 @@ function missingSupabaseStore() {
   return { kind: 'unconfigured', async prepare() { fail(); }, async purgeExpired() {}, async userByEmail() { fail(); }, async insertUser() { fail(); }, async deleteUser() { fail(); }, async markVerified() { fail(); }, async setPassword() { fail(); }, async sessionByHash() { fail(); }, async insertSession() { fail(); }, async deleteSession() { fail(); }, async deleteOtherSessions() { fail(); }, async deleteSessionsForUser() { fail(); }, async workspace() { fail(); }, async insertWorkspace() { fail(); }, async updateWorkspace() { fail(); }, async emailToken() { fail(); }, async replaceEmailToken() { fail(); }, async deleteEmailTokens() { fail(); } };
 }
 
+function supabaseProjectUrl(value) {
+  const url = new URL(String(value).trim());
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    const err = Error('SUPABASE_URL must be the project URL, for example https://your-project.supabase.co.');
+    err.status = 503;
+    throw err;
+  }
+  return url.origin;
+}
+
 export function openStore({ dataDir }) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (url && key) return supabaseStore(url, key);
+  if (url && key) return supabaseStore(supabaseProjectUrl(url), key);
   if (process.env.VERCEL) return missingSupabaseStore();
   return sqliteStore(dataDir);
 }
